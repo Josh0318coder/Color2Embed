@@ -18,12 +18,8 @@ def Lab2RGB_out(img_lab):
     img_lab = img_lab.detach().cpu()
     img_l = img_lab[:,:1,:,:]
     img_ab = img_lab[:,1:,:,:]
-    # print(torch.max(img_l), torch.min(img_l))
-    # print(torch.max(img_ab), torch.min(img_ab))
     img_l = img_l + 50
     pred_lab = torch.cat((img_l, img_ab), 1)[0,...].numpy()
-    # grid_lab = utils.make_grid(pred_lab, nrow=1).numpy().astype("float64")
-    # print(grid_lab.shape)
     out = (np.clip(color.lab2rgb(pred_lab.transpose(1, 2, 0)), 0, 1)* 255).astype("uint8")
     return out
 
@@ -35,7 +31,6 @@ def Normalize(inputs):
     ab = inputs[:, :, 1:3]
     l = l - 50
     lab = np.concatenate((l, ab), 2)
-
     return lab.astype('float32')
 
 def numpy2tensor(inputs):
@@ -61,10 +56,7 @@ if __name__ == "__main__":
     ckpt_path = 'experiments/Color2Embed_1/045000.pt'
     test_dir_path = 'test_datasets/gray2color/exemplar_based/'
     out_dir_path = 'results/gray2color/exemplar_based/' + model_name
-    imgs_num = len(os.listdir(test_dir_path)) // 2
     imgsize = 256
-    
-    mkdirs(out_dir_path)
 
     ckpt = torch.load(ckpt_path, map_location=lambda storage, loc: storage)
 
@@ -76,52 +68,75 @@ if __name__ == "__main__":
     colorUNet.load_state_dict(ckpt["colorUNet"])
     colorUNet.eval()
 
-    imgs = []
-    imgs_lab = []
     cos_d_avg = 0
+    total_imgs = 0
 
-    for i in range(imgs_num):
-        idx = i
-        print('Image', idx, 'Input Image', 'in%d.JPEG'%idx, 'Ref Image', 'ref%d.JPEG'%idx)
+    scene_dirs = sorted([
+        d for d in os.listdir(test_dir_path)
+        if os.path.isdir(os.path.join(test_dir_path, d))
+    ])
 
-        img_path = os.path.join(test_dir_path, '%03d_in.png'%idx)
-        ref_img_path = os.path.join(test_dir_path, '%03d_ref.png'%idx)
-        out_img_path = os.path.join(out_dir_path, 'in%d_ref%d.png'%(idx, idx))
+    for scene in scene_dirs:
+        scene_in_path = os.path.join(test_dir_path, scene)
+        scene_out_path = os.path.join(out_dir_path, scene)
+        mkdirs(scene_out_path)
 
-        img1 = Image.open(img_path).convert("RGB")
-        width, height = img1.size
-        img2 = Image.open(ref_img_path).convert("RGB")
+        frames = sorted([
+            f for f in os.listdir(scene_in_path)
+            if f.lower().endswith('.png')
+        ])
 
-        img1, img1_lab = preprocessing(img1)
-        img2, img2_lab = preprocessing(img2)
+        if len(frames) == 0:
+            continue
 
-        img1 = img1.to(device)
-        img1_lab = img1_lab.to(device)
+        # Load first frame as color reference
+        ref_img_path = os.path.join(scene_in_path, frames[0])
+        img_ref = Image.open(ref_img_path).convert("RGB")
+        img2, img2_lab = preprocessing(np.array(img_ref))
         img2 = img2.to(device)
         img2_lab = img2_lab.to(device)
-
-        # print('-------',torch.max(img1_lab[:,:1,:,:]), torch.min(img1_lab[:,1:,:,:]))
+        img2_resize = F.interpolate(img2 / 255., size=(imgsize, imgsize), mode='bilinear',
+                                     recompute_scale_factor=False, align_corners=False)
 
         with torch.no_grad():
-            img2_resize = F.interpolate(img2 / 255., size=(imgsize, imgsize), mode='bilinear', recompute_scale_factor=False, align_corners=False)
-            img1_L_resize = F.interpolate(img1_lab[:,:1,:,:] / 50., size=(imgsize, imgsize), mode='bilinear', recompute_scale_factor=False, align_corners=False)
-
             color_vector = colorEncoder(img2_resize)
 
-            fake_ab = colorUNet((img1_L_resize, color_vector))
-            fake_ab = F.interpolate(fake_ab*110, size=(height, width), mode='bilinear', recompute_scale_factor=False, align_corners=False)
-        
-            fake_img = torch.cat((img1_lab[:,:1,:,:], fake_ab), 1)
-            fake_img = Lab2RGB_out(fake_img)
-            io.imsave(out_img_path, fake_img)
+        for frame_name in frames:
+            img_path = os.path.join(scene_in_path, frame_name)
+            out_img_path = os.path.join(scene_out_path, frame_name)
 
+            print(f'Scene: {scene}, Frame: {frame_name}')
 
-            re_img, re_img_lab = preprocessing(fake_img)
-            re_img = re_img.to(device)
-            re_img_resize = F.interpolate(re_img / 255., size=(imgsize, imgsize), mode='bilinear', recompute_scale_factor=False, align_corners=False)
-            re_color_vector = colorEncoder(re_img_resize)
+            # Convert to grayscale then back to RGB to simulate gray input
+            img_color = Image.open(img_path).convert("RGB")
+            width, height = img_color.size
+            img_gray = img_color.convert("L").convert("RGB")
 
-            cos_d = torch.cosine_similarity(color_vector, re_color_vector, dim=1)
-            cos_d_avg += cos_d
+            img1, img1_lab = preprocessing(np.array(img_gray))
+            img1 = img1.to(device)
+            img1_lab = img1_lab.to(device)
 
-    print('Average Cosine Distance is: ', cos_d_avg/imgs_num)
+            with torch.no_grad():
+                img1_L_resize = F.interpolate(img1_lab[:,:1,:,:] / 50., size=(imgsize, imgsize),
+                                               mode='bilinear', recompute_scale_factor=False, align_corners=False)
+
+                fake_ab = colorUNet((img1_L_resize, color_vector))
+                fake_ab = F.interpolate(fake_ab * 110, size=(height, width), mode='bilinear',
+                                         recompute_scale_factor=False, align_corners=False)
+
+                fake_img = torch.cat((img1_lab[:,:1,:,:], fake_ab), 1)
+                fake_img = Lab2RGB_out(fake_img)
+                io.imsave(out_img_path, fake_img)
+
+                re_img, re_img_lab = preprocessing(fake_img)
+                re_img = re_img.to(device)
+                re_img_resize = F.interpolate(re_img / 255., size=(imgsize, imgsize), mode='bilinear',
+                                               recompute_scale_factor=False, align_corners=False)
+                re_color_vector = colorEncoder(re_img_resize)
+
+                cos_d = torch.cosine_similarity(color_vector, re_color_vector, dim=1)
+                cos_d_avg += cos_d
+                total_imgs += 1
+
+    if total_imgs > 0:
+        print('Average Cosine Distance is: ', cos_d_avg / total_imgs)
