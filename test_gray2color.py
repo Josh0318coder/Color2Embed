@@ -50,7 +50,7 @@ def preprocessing(inputs):
     return img.unsqueeze(0), img_lab.unsqueeze(0)
 
 if __name__ == "__main__":
-    device = "cuda"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     model_name = 'Color2Embed_1_4.5w'
     ckpt_path = 'experiments/Color2Embed_1/045000.pt'
