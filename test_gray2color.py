@@ -58,7 +58,7 @@ if __name__ == "__main__":
     out_dir_path = 'results/gray2color/exemplar_based/' + model_name
     imgsize = 256
 
-    ckpt = torch.load(ckpt_path, map_location=lambda storage, loc: storage)
+    ckpt = torch.load(ckpt_path, map_location=lambda storage, loc: storage, weights_only=False)
 
     colorEncoder = ColorEncoder().to(device)
     colorEncoder.load_state_dict(ckpt["colorEncoder"])
