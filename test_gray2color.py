@@ -83,7 +83,7 @@ if __name__ == "__main__":
 
         frames = sorted([
             f for f in os.listdir(scene_in_path)
-            if f.lower().endswith('.png')
+            if f.lower().endswith(('.png', '.jpg', '.jpeg'))
         ])
 
         if len(frames) == 0:
